@@ -17,7 +17,7 @@ def _create_validator() -> jsonschema.Draft4Validator:
     """
     # Load both common and segmentation schema files
     schemas_dir = os.path.join(
-        os.path.dirname(__file__), "externals", "dcmqi", "doc", "schemas"
+        os.path.dirname(__file__), "schemas"
     )
     seg_schema_path = os.path.join(schemas_dir, "seg-schema.json")
     with open(seg_schema_path) as ifile:
