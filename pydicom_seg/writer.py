@@ -103,12 +103,6 @@ class MultiClassWriter:
             segmentation, source_images
         )
 
-        # Compute unique labels and their respective bounding boxes
-        label_statistics_filter = sitk.LabelStatisticsImageFilter()
-        label_statistics_filter.Execute(segmentation, segmentation)
-        unique_labels = set([x for x in label_statistics_filter.GetLabels() if x != 0])
-        if len(unique_labels) == 0:
-            raise ValueError("Segmentation does not contain any labels")
 
         # Check if all present labels where declared in the DICOM template
         declared_segments = set(
@@ -117,6 +111,12 @@ class MultiClassWriter:
         if self._ignore_segmentation:
             labels_to_process = declared_segments
         else:
+            # Compute unique labels and their respective bounding boxes
+            label_statistics_filter = sitk.LabelStatisticsImageFilter()
+            label_statistics_filter.Execute(segmentation, segmentation)
+            unique_labels = set([x for x in label_statistics_filter.GetLabels() if x != 0])
+            if len(unique_labels) == 0:
+                raise ValueError("Segmentation does not contain any labels")
             missing_declarations = unique_labels.difference(declared_segments)
             if missing_declarations:
                 missing_segment_numbers = ", ".join([str(x) for x in missing_declarations])
@@ -128,14 +128,16 @@ class MultiClassWriter:
                     raise ValueError(message)
                 logger.warning(message)
             labels_to_process = unique_labels.intersection(declared_segments)
+
+            # Compute bounding boxes for each present label and optionally restrict
+            # the volume to serialize to the joined maximum extent
+            bboxs = {
+                x: label_statistics_filter.GetBoundingBox(x) for x in labels_to_process
+            }
+            
         if not labels_to_process:
             raise ValueError("No segments found for encoding as DICOM-SEG")
 
-        # Compute bounding boxes for each present label and optionally restrict
-        # the volume to serialize to the joined maximum extent
-        bboxs = {
-            x: label_statistics_filter.GetBoundingBox(x) for x in labels_to_process
-        }
         if self._inplane_cropping:
             min_x, min_y, _ = np.min([x[::2] for x in bboxs.values()], axis=0).tolist()
             max_x, max_y, _ = (
