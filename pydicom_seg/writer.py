@@ -47,6 +47,8 @@ class MultiClassWriter:
             The segment won't be included in the final DICOM-SEG.
             Otherwise, the encoding is aborted if segment information is
             missing.
+        ignore_segmentation: If enabled ignore the data of the segmentation
+            and write zeros.
     """
 
     def __init__(
@@ -55,10 +57,12 @@ class MultiClassWriter:
         inplane_cropping: bool = False,
         skip_empty_slices: bool = True,
         skip_missing_segment: bool = False,
+        ignore_segmentation: bool = False
     ):
         self._inplane_cropping = inplane_cropping
         self._skip_empty_slices = skip_empty_slices
         self._skip_missing_segment = skip_missing_segment
+        self._ignore_segmentation = ignore_segmentation
         self._template = template
 
     def write(
@@ -85,14 +89,14 @@ class MultiClassWriter:
                 "Multi-class segmentations can only be "
                 "represented with a single component per voxel"
             )
-
-        if segmentation.GetPixelID() not in [
-            sitk.sitkUInt8,
-            sitk.sitkUInt16,
-            sitk.sitkUInt32,
-            sitk.sitkUInt64,
-        ]:
-            raise ValueError("Unsigned integer data type required")
+        if not self._ignore_segmentation:
+            if segmentation.GetPixelID() not in [
+                sitk.sitkUInt8,
+                sitk.sitkUInt16,
+                sitk.sitkUInt32,
+                sitk.sitkUInt64,
+            ]:
+                raise ValueError("Unsigned integer data type required")
 
         # TODO Add further checks if source images are from the same series
         slice_to_source_images = self._map_source_images_to_segmentation(
@@ -110,17 +114,20 @@ class MultiClassWriter:
         declared_segments = set(
             [x.SegmentNumber for x in self._template.SegmentSequence]
         )
-        missing_declarations = unique_labels.difference(declared_segments)
-        if missing_declarations:
-            missing_segment_numbers = ", ".join([str(x) for x in missing_declarations])
-            message = (
-                f"Skipping segment(s) {missing_segment_numbers}, since their "
-                "declaration is missing in the DICOM template"
-            )
-            if not self._skip_missing_segment:
-                raise ValueError(message)
-            logger.warning(message)
-        labels_to_process = unique_labels.intersection(declared_segments)
+        if self._ignore_segmentation:
+            labels_to_process = declared_segments
+        else:
+            missing_declarations = unique_labels.difference(declared_segments)
+            if missing_declarations:
+                missing_segment_numbers = ", ".join([str(x) for x in missing_declarations])
+                message = (
+                    f"Skipping segment(s) {missing_segment_numbers}, since their "
+                    "declaration is missing in the DICOM template"
+                )
+                if not self._skip_missing_segment:
+                    raise ValueError(message)
+                logger.warning(message)
+            labels_to_process = unique_labels.intersection(declared_segments)
         if not labels_to_process:
             raise ValueError("No segments found for encoding as DICOM-SEG")
 
@@ -168,7 +175,10 @@ class MultiClassWriter:
             target=result, segmentation=segmentation
         )
 
-        buffer = sitk.GetArrayFromImage(segmentation)
+        if self._ignore_segmentation:
+            buffer = np.zeros(sitk.GetArrayFromImage(segmentation).shape)
+        else:
+            buffer = sitk.GetArrayFromImage(segmentation)
         for segment in labels_to_process:
             logger.info(f"Processing segment {segment}")
 
