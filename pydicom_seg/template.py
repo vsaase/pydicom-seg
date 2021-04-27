@@ -128,9 +128,9 @@ def from_dcmqi_metainfo(metainfo: Union[dict, str]) -> pydicom.Dataset:
     assert isinstance(metainfo, dict)
 
     # Validate dictionary against dcmqi JSON schemas
-    validator = _create_validator()
-    if not validator.is_valid(metainfo):
-        raise NotImplementedError()
+    # validator = _create_validator()
+    # if not validator.is_valid(metainfo):
+    #     raise NotImplementedError()
 
     # Create dataset from provided JSON
     dataset = pydicom.Dataset()
