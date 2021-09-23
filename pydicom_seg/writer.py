@@ -57,13 +57,15 @@ class MultiClassWriter:
         inplane_cropping: bool = False,
         skip_empty_slices: bool = True,
         skip_missing_segment: bool = False,
-        ignore_segmentation: bool = False
+        ignore_segmentation: bool = False,
+        segmentation_type: SegmentationType = SegmentationType.BINARY,
     ):
         self._inplane_cropping = inplane_cropping
         self._skip_empty_slices = skip_empty_slices
         self._skip_missing_segment = skip_missing_segment
         self._ignore_segmentation = ignore_segmentation
         self._template = template
+        self._segmentation_type = segmentation_type
 
     def write(
         self, segmentation: sitk.Image, source_images: List[pydicom.Dataset]
@@ -90,36 +92,50 @@ class MultiClassWriter:
                 "represented with a single component per voxel"
             )
         if not self._ignore_segmentation:
-            if segmentation.GetPixelID() not in [
+            if self._segmentation_type == SegmentationType.BINARY and segmentation.GetPixelID() not in [
                 sitk.sitkUInt8,
                 sitk.sitkUInt16,
                 sitk.sitkUInt32,
                 sitk.sitkUInt64,
             ]:
-                raise ValueError("Unsigned integer data type required")
+                raise ValueError(
+                    "Unsigned integer data type required for binary segmentation")
+
+            if self._segmentation_type == SegmentationType.FRACTIONAL and segmentation.GetPixelID() not in [
+                sitk.sitkFloat32,
+                sitk.sitkFloat64,
+            ]:
+                raise ValueError(
+                    "Float data type required for fractional segmentation")
 
         # TODO Add further checks if source images are from the same series
         slice_to_source_images = self._map_source_images_to_segmentation(
             segmentation, source_images
         )
 
-
         # Check if all present labels where declared in the DICOM template
         declared_segments = set(
             [x.SegmentNumber for x in self._template.SegmentSequence]
         )
-        if self._ignore_segmentation:
+
+        if self._segmentation_type == SegmentationType.FRACTIONAL:
+            assert len(declared_segments) == 1
+
+        # Just use the declared segment from the template when ignoring the segmentation or processing fractional input
+        if self._ignore_segmentation or self._segmentation_type == SegmentationType.FRACTIONAL:
             labels_to_process = declared_segments
         else:
             # Compute unique labels and their respective bounding boxes
             label_statistics_filter = sitk.LabelStatisticsImageFilter()
             label_statistics_filter.Execute(segmentation, segmentation)
-            unique_labels = set([x for x in label_statistics_filter.GetLabels() if x != 0])
+            unique_labels = set(
+                [x for x in label_statistics_filter.GetLabels() if x != 0])
             if len(unique_labels) == 0:
                 raise ValueError("Segmentation does not contain any labels")
             missing_declarations = unique_labels.difference(declared_segments)
             if missing_declarations:
-                missing_segment_numbers = ", ".join([str(x) for x in missing_declarations])
+                missing_segment_numbers = ", ".join(
+                    [str(x) for x in missing_declarations])
                 message = (
                     f"Skipping segment(s) {missing_segment_numbers}, since their "
                     "declaration is missing in the DICOM template"
@@ -134,12 +150,13 @@ class MultiClassWriter:
             bboxs = {
                 x: label_statistics_filter.GetBoundingBox(x) for x in labels_to_process
             }
-            
+
         if not labels_to_process:
             raise ValueError("No segments found for encoding as DICOM-SEG")
 
         if self._inplane_cropping:
-            min_x, min_y, _ = np.min([x[::2] for x in bboxs.values()], axis=0).tolist()
+            min_x, min_y, _ = np.min([x[::2]
+                                     for x in bboxs.values()], axis=0).tolist()
             max_x, max_y, _ = (
                 np.max([x[1::2] for x in bboxs.values()], axis=0) + 1
             ).tolist()
@@ -150,14 +167,15 @@ class MultiClassWriter:
         else:
             min_x, min_y = 0, 0
             max_x, max_y = segmentation.GetWidth(), segmentation.GetHeight()
-            logger.info(f"Serializing image planes at full size ({max_x}, {max_y})")
+            logger.info(
+                f"Serializing image planes at full size ({max_x}, {max_y})")
 
         # Create target dataset for storing serialized data
         result = SegmentationDataset(
             reference_dicom=source_images[0] if source_images else None,
             rows=max_y - min_y,
             columns=max_x - min_x,
-            segmentation_type=SegmentationType.BINARY,
+            segmentation_type=self._segmentation_type,
         )
         dimension_organization = DimensionOrganizationSequence()
         dimension_organization.add_dimension(
@@ -197,10 +215,17 @@ class MultiClassWriter:
             skipped_slices = []
             for slice_idx in range(min_z, max_z):
                 frame_index = (min_x, min_y, slice_idx)
-                frame_position = segmentation.TransformIndexToPhysicalPoint(frame_index)
-                frame_data = np.equal(
-                    buffer[slice_idx, min_y:max_y, min_x:max_x], segment
-                )
+                frame_position = segmentation.TransformIndexToPhysicalPoint(
+                    frame_index)
+
+                if self._segmentation_type == SegmentationType.BINARY:
+                    frame_data = np.equal(
+                        buffer[slice_idx, min_y:max_y, min_x:max_x], segment
+                    )
+                elif self._segmentation_type == SegmentationType.FRACTIONAL:
+                    frame_data = buffer[slice_idx,
+                                        min_y:max_y, min_x:max_x] * 255
+
                 if self._skip_empty_slices and not frame_data.any():
                     skipped_slices.append(slice_idx)
                     continue
@@ -231,11 +256,11 @@ class MultiClassWriter:
         if self._inplane_cropping or self._skip_empty_slices:
             num_encoded_bytes = len(result.PixelData)
             max_encoded_bytes = (
-                segmentation.GetWidth()
-                * segmentation.GetHeight()
-                * segmentation.GetDepth()
-                * len(result.SegmentSequence)
-                // 8
+                segmentation.GetWidth() *
+                segmentation.GetHeight() *
+                segmentation.GetDepth() *
+                len(result.SegmentSequence) //
+                8
             )
             savings = (1 - num_encoded_bytes / max_encoded_bytes) * 100
             logger.info(
