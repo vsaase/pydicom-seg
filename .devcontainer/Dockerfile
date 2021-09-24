@@ -12,6 +12,9 @@ RUN pip install --user pipx
 RUN python3 -m pipx ensurepath
 RUN pipx install poetry
 
+RUN git config --global user.name "Victor Saase"
+RUN git config --global user.email "vsaase@gmail.com"
+
 # [Optional] If your pip requirements rarely change, uncomment this section to add them to the image.
 # COPY requirements.txt /tmp/pip-tmp/
 # RUN pip3 --disable-pip-version-check --no-cache-dir install -r /tmp/pip-tmp/requirements.txt \
