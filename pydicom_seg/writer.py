@@ -121,13 +121,14 @@ class MultiClassWriter:
         if self._segmentation_type == SegmentationType.FRACTIONAL:
             assert len(declared_segments) == 1
 
+        label_statistics_filter = sitk.LabelStatisticsImageFilter()
+        label_statistics_filter.Execute(segmentation, segmentation)
+
         # Just use the declared segment from the template when ignoring the segmentation or processing fractional input
         if self._ignore_segmentation or self._segmentation_type == SegmentationType.FRACTIONAL:
             labels_to_process = declared_segments
         else:
             # Compute unique labels and their respective bounding boxes
-            label_statistics_filter = sitk.LabelStatisticsImageFilter()
-            label_statistics_filter.Execute(segmentation, segmentation)
             unique_labels = set(
                 [x for x in label_statistics_filter.GetLabels() if x != 0])
             if len(unique_labels) == 0:
@@ -145,11 +146,11 @@ class MultiClassWriter:
                 logger.warning(message)
             labels_to_process = unique_labels.intersection(declared_segments)
 
-            # Compute bounding boxes for each present label and optionally restrict
-            # the volume to serialize to the joined maximum extent
-            bboxs = {
-                x: label_statistics_filter.GetBoundingBox(x) for x in labels_to_process
-            }
+        # Compute bounding boxes for each present label and optionally restrict
+        # the volume to serialize to the joined maximum extent
+        bboxs = {
+            x: label_statistics_filter.GetBoundingBox(x) for x in labels_to_process
+        }
 
         if not labels_to_process:
             raise ValueError("No segments found for encoding as DICOM-SEG")
